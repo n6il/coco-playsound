@@ -30,26 +30,35 @@ E_OK		EQU $00
 E_NOPLAYSOUND   EQU $FA
 E_READ		EQU $F4
 
+* pyDriveWire Features
+FEATURE_RESERVED EQU %10000000
+FEATURE_PLAYSND  EQU %01000000
+
 		org $4000
 start
 * Check if server is pyDriveWire
-		bsr	CheckServer
-		bcs 	noplaysound
+		lbsr	CheckServer
+		bcs 	unknownerror		* carry set - not pyDriveWire or error
+		bitb	#(FEATURE_RESERVED|FEATURE_PLAYSND)	* test pyDriveWire, playsound
+		bmi	unknownerror		* high bit set - old pyDriveWire
+		beq	noplaysound		* zero - pyDriveWire, playsound disabled
+		lda	#$01
+		sta	SndFlg			* Set Sound Flag 
 * Send PlaySound command to server
 		ldx	#cmd			* command buffer
 		ldy	#cmdlen			* command length
-		lbsr	DWWrite
-		bcs	unknownerror
+		lbsr	DWWrite			* Send it
+		bcs	unknownerror		* error
 * Get command result from server
 		ldx	#databuf		* data buffer
 		clr	,x			* Initialize error
 		dec	,x
 		ldy	#1			* 1 byte
-		lbsr	DWRead
-		bcs	unknownerror
-		bne	noplaysound
+		lbsr	DWRead			* Read the byte
+		bcs	unknownerror		* erorr
+		bne	noplaysound		* no bytes read - must be DriveWire3
 
-		lda	,x
+		lda	,x			* check the return code
 		cmpa	#0
 		beq	done			* no error
 
@@ -61,9 +70,14 @@ start
 
 unknownerror
 		ldx	#unknownerrormsg-1	* Fallthrough: unknown error
+		clra				* Clear sound flag
+		sta	SndFlg
 		bra 	printerror		* Print error message	
 
-noplaysound	ldx	#noplaysoundmsg-1
+noplaysound
+		ldx	#noplaysoundmsg-1
+		clra				* Clear sound flag
+		sta	SndFlg
 		bra 	printerror
 
 fnferror	ldx	#fnfmsg-1
@@ -74,127 +88,64 @@ done
 		rts
 
 
-DwGetStatus
+* Input - B client id
+* Output - B result
+*          X buffer
+*          CC Carry set on error
+DwInit
 		ldx	#databuf
-		lda	#OP_SERREAD
-		sta	,x
-		ldy	#1
+		lda	#OP_DWINIT				* DWInit Command
+		std	,x					* B contains client id
+		ldy	#2					* Command Length
 		lbsr	DWWrite
-		bcs	@rts
-		lda	#OP_SERREAD
-		sta	,x
-		ldy	#2
+		bcs	@nope					* error
+		ldy	#1					* result length
 		lbsr	DWRead
-		bcs	@rts
-		ldd	,x
-@rts
+		bcs	@nope
+		ldb	,x					* get result
+		andcc	#$FE					* clear carry
+@nope
 		rts
+
+* New Check Server - use the dwInit combo lock
+* to get pyDriveWire features
+
+* CheckServer - Check if the DriveWire Server is pyDriveWire and
+*    return pyDriveWire features
+* Output in CC - Carry bit set - error or not pyDriveWire 
+*            B - 0xFF - pyDriveWire without enhanced DwInit support
+*            B - bit 0 - pyDriveWire with EmCee Support
+*            B - bit 1 - pyDriveWire with DLOAD support enabled
+*            B - bit 2 - pyDriveWire with HDB-DOS support enabled
+*            B - bit 3 - pyDriveWire with DosPlus support enabled
+*            B - bit 4 - pyDriveWire with printer support enabled
+*            B - bit 5 - pyDriveWire with ssh support enabled
+*            B - bit 6 - pyDriveWire with playsound support enabled
+*            B - bit 7 - Reserved - set only if old pyDriveWire server
 CheckServer
-* 1. OP_DWINIT must return $ff
-		ldx	#databuf
-		lda	#OP_DWINIT
-		sta	,x
-		ldy	#1
-		lbsr	DWWrite
-		lbcs	nope
-		ldy	#1
-		lbsr	DWRead
-		lbcs	nope
-		lda	,x
-		cmpa	#$FF
-		lbne	nope
-* 2. Open channel
-		ldx	#databuf
-		lda	#OP_SERSETSTAT
-		ldb	#1			* channel 1
-		std	,x
-		lda	#SS.Open		* operation
-		sta	2,x
-		ldy	#3
-		lbsr	DWWrite
-* 3. status
-		bsr	DwGetStatus
-		lbcs	nope
-* 4. send command
-		ldx	#ATI
-		ldy	#ATIlen
-		lbsr	DWWrite
-		bcs	nope
-* 5. get status and length
-		bsr	DwGetStatus
-		lbcs	nope
-		cmpa	#18			* channel 1
-		bne	nope
-* 6. read data command
-		ldx	#databuf
-		lda	#OP_SERREADM		* command
-		sta	,x
-		lda	#1			* channel
-		sta	1,x
-		stb	2,x			* data length
-		pshs	b			* save length for later
-		clra				* save length for later again
-		pshs	d
-		ldy	#3			* command length
-		lbsr	DWWrite			* write it
-		bcs	nope
-* 7. read the data
-		puls	y			* get length back
-		lbsr	DWRead			* read it
-		bcs	nope			* error
-		bne	nope			* not enough bytes read
-* 8. parsing
-* "pyDriveWire v0.5d"
-		puls	b			* get length back
-		ldy	#pyDriveWire		* compare string
-		ldx	#databuf		* input data
-@loop		cmpy	#pyDriveWireEnd		* if got to end of compare string
-		beq	@zero			* found it, start parsing major version
-		cmpb	#0			* check if more input data
-		beq 	nope
-		lda	,x+			* get next input data
-		decb				* decrement input data counter
-		cmpa	,y			* compare input to current pos in compare string
-		bne	@loop			* nope move along in input string
-		leay	1,y			* found, move compare string
-		bra	@loop
-@zero
-		lda	,x+			* check major version
-		cmpa	#'0'
-		beq	@dot			* major version is 0, go for dot then minor
-		blo	nope			* not a digit
-		cmpa	#'9'
-		bhi	nope			* not a digit
-		bra	@ok			* Major version is higher than 0 - ok!
-@dot
-		lda	,x+			* look for the dot
-		cmpa	#'.'			
-		bne	nope			* this is not valid
-@minor		lda	,x+			* minor version
-		cmpa	#'5'
-		blo	nope			* less than 5
-@sub		lda	,x+			* sub version
-		cmpa	#'d'
-		blo	nope			* too low
-@ok
-		andcc 	#$FE			* clear carry
+* Combo lock stage 1: send 'p' OP_DWINIT must return $ff
+		ldb	#'p'					* combo lock stage 1
+		bsr	DwInit
+		bcs	@err					* error
+		cmpb	#'p'					* and check it
+		bne	@err					* not pyDriveWire
+* Combo lock stage 2: send 'y' OP_DWINIT must return $ff
+		ldb	#'y'					* combo lock stage 2
+		bsr	DwInit
+		bcs	@err					* error
+		cmpb	#'y'					* and check it
+		bne	@err					* not pyDriveWire
+* Combo lock stage 3: send 'F' OP_DWINIT Returns server features page 0
+		ldb	#'E'					* combo lock stage 3
+		bsr	DwInit
+		bcs	@err					* error
 		rts
-nope		orcc	#$01			* set carry
+@err		orcc	#%00000001				* Not pyDriveWire - set carry
 		rts
-ATI		fcb	OP_SERWRITEM,$01,ATImsglen
-ATImsg		fcc	"ATI"
-		fcb	$0d
-ATImsglen	equ	.-ATImsg
-ATIlen		equ	.-ATI
-pyDriveWire	fcc	"pyDriveWire v"
-pyDriveWireEnd	equ	.
+
 * flags
 SndFlg		fcb	1
 
-* DW Command - Playsound Check
-chkcmd		fcb	OP_PLAYSOUND
-		fcb	0
-chkcmdlen		equ .-chkcmd
 * DW Command
 cmd		fcb	OP_PLAYSOUND
 		fcb	fnlen
