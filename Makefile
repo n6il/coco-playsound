@@ -11,7 +11,7 @@ dsk: $(OBJS)
 	decb copy coco-playsound-cc23.bin coco-playsound.dsk,DWSMCC23.BIN -2 -b
 	decb copy coco-playsound-cc1.bin coco-playsound.dsk,DWSMCC1.BIN -2 -b
 	decb copy coco-playsound-becker.bin coco-playsound.dsk,DWSMBCK.BIN -2 -b
-	decb copy coco-playsound-becker.bin coco-playsound.dsk,DWSM232.BIN -2 -b
+	decb copy coco-playsound-rs232pak.bin coco-playsound.dsk,DWSM232.BIN -2 -b
 
 clean:
 	rm -f coco-playsound.dsk *.bin *.lst
