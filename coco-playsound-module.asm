@@ -45,6 +45,7 @@ SS.Close	EQU $2A
 OP_SERWRITEM	EQU $64
 * OP_DWINIT	EQU $5A
 OP_PLAYSOUND	EQU $FA
+OP_PLYSNDSTP	EQU $FB
 * Drivewire Errors
 E_OK		EQU $00
 E_NOPLAYSOUND   EQU $FA
@@ -70,26 +71,23 @@ playsound
 *	250 - Playsound not enabled
 *	244 - File not found
 * Send PlaySound command to server
-		clra
-		std	databuf
-		pshs	x
-		ldx	#cmd			* command buffer
+		clra				* Length in D
+		pshs	d			* save length for later
+		pshs	x			* save filename buffer(X) for later
+		ldx	#cmd			* cmd buffer
+		stb	1,x			* length (b)
 		ldy	#cmdlen			* command length
 		lbsr	DWWrite			* Send it
 		bcs	unknownerror		* error
-		ldx	#databuf+1
-		ldy	#1
-		lbsr	DWWrite
-		bcs	unknownerror		* error
-		ldy	databuf			* filename length
 		puls	x			* filename buffer
+		puls	y			* filename length
 		lbsr	DWWrite			* Send it
 		bcs	unknownerror		* error
 * Get command result from server
-		ldx	#databuf		* data buffer
+		ldx	#buf			* data buffer
 		clr	,x			* Initialize error
 		dec	,x
-		ldy	#1			* 1 byte
+		ldy	#buflen			* 1 byte
 		lbsr	DWRead			* Read the byte
 		bcs	unknownerror		* erorr
 		bne	noplaysound		* no bytes read - must be DriveWire3
@@ -101,19 +99,26 @@ done
 
 unknownerror
 		ldb	#255			* unknown error 255
-		bra 	done 			* exit
+		rts 				* exit
 
 noplaysound
 		ldb	#254			* no playsouund error 254
-		bra 	done 			* exit
+		rts 				* exit
 
+playstop
+		ldx	#stpcmd
+		ldy	#stplen
+		lbsr	DWWrite
+		rts
 
 * DW Command
 cmd		fcb	OP_PLAYSOUND
+buf		rmb	1
 cmdlen		equ .-cmd
+buflen		equ .-buf
 
-* Data area
-databuf		rmb 2
+stpcmd		fcb	OP_PLYSNDSTP
+stplen		equ .-stpcmd
 
 * Import DriveWire stuff
  include dwdefs.d
