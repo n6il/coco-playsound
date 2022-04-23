@@ -106,10 +106,11 @@ noplaysound
 		rts 				* exit
 
 playstop
+		pshs	x,y
 		ldx	#stpcmd
 		ldy	#stplen
 		lbsr	DWWrite
-		rts
+		puls	x,y,pc
 
 * DW Command
 cmd		fcb	OP_PLAYSOUND
